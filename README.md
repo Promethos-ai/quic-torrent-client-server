@@ -46,19 +46,24 @@ Then use commands:
 cargo run --release --bin client download seed/hello_world.txt.torrent downloaded/hello_world.txt 127.0.0.1 7001
 ```
 
-## Example Usage
+## Quick Start
 
-1. Start the tracker server:
+1. **Build the project:**
+   ```bash
+   cargo build --release
+   ```
+
+2. **Start the tracker server:**
    ```bash
    cargo run --release --bin tracker -- --quic 7001
    ```
 
-2. In another terminal, download a file:
+3. **In another terminal, download a file:**
    ```bash
    cargo run --release --bin client download seed/hello_world.txt.torrent downloaded/hello_world.txt 127.0.0.1 7001
    ```
 
-3. Verify the downloaded file matches the seed:
+4. **Verify the downloaded file matches the seed:**
    ```bash
    # On Linux/Mac
    diff seed/hello_world.txt downloaded/hello_world.txt
@@ -66,6 +71,18 @@ cargo run --release --bin client download seed/hello_world.txt.torrent downloade
    # On Windows PowerShell
    Compare-Object (Get-Content seed/hello_world.txt) (Get-Content downloaded/hello_world.txt)
    ```
+
+## Documentation
+
+For detailed usage instructions, examples, and troubleshooting, see **[USAGE.md](USAGE.md)**.
+
+The usage guide includes:
+- Complete build instructions
+- Server and client usage examples
+- Network configuration
+- Local and remote testing examples
+- Troubleshooting guide
+- Performance notes
 
 ## Project Structure
 
