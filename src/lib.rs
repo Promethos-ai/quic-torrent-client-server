@@ -114,6 +114,8 @@ pub mod quic_client;
 pub mod messages;
 pub mod client;
 pub mod console_client;
+pub mod ai_processor;
+pub mod work_distribution;
 
 // Logging macros
 #[macro_export]
@@ -151,4 +153,7 @@ macro_rules! log_client_sent {
         }
     };
 }
+
+
+
 

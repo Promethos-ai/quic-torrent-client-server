@@ -8,6 +8,36 @@ use crate::messages::ErrorResponse;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 
+/// Detect request type from JSON string
+fn detect_request_type(json: &str) -> &'static str {
+    if json.contains("\"info_hash\"") && json.contains("\"peer_id\"") {
+        "TrackerAnnounceRequest"
+    } else if json.contains("\"file\"") {
+        "FileRequest"
+    } else if json.contains("\"query\"") {
+        "AiRequest"
+    } else if json.contains("\"type\"") {
+        "CustomJSON"
+    } else {
+        "UnknownRequest"
+    }
+}
+
+/// Detect response type from JSON string
+fn detect_response_type(json: &str) -> &'static str {
+    if json.contains("\"peers\"") && json.contains("\"interval\"") {
+        "TrackerAnnounceResponse"
+    } else if json.contains("\"data\"") && json.contains("\"filename\"") {
+        "FileResponse"
+    } else if json.contains("\"answer\"") && json.contains("\"metadata\"") {
+        "AiResponse"
+    } else if json.contains("\"error\"") {
+        "ErrorResponse"
+    } else {
+        "UnknownResponse"
+    }
+}
+
 /// Connects to a QUIC endpoint and sends/receives JSON messages.
 pub struct QuicClient {
     endpoint: Endpoint,
@@ -42,10 +72,51 @@ impl QuicClient {
         
         crate::log_client!("[QuicClient::send_message] Connecting to {}:{}", server, port);
         let connection = self.endpoint.connect(addr, server)?;
-        let conn = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
+        
+        // FALLBACK SHUNT: Extended timeout and retry logic for ALPN negotiation
+        // Multiple ALPN protocols in config provide automatic fallback
+        let conn = match tokio::time::timeout(
+            std::time::Duration::from_secs(20),  // Extended timeout for ALPN negotiation
             connection
-        ).await??;
+        ).await {
+            Ok(Ok(conn)) => {
+                crate::log_client!("[QuicClient::send_message] Connection established (first attempt)");
+                conn
+            }
+            Ok(Err(e)) => {
+                // Connection failed - log and retry once
+                crate::log_client!("[QuicClient::send_message] Connection failed: {:?}, attempting retry", e);
+                let retry_connection = self.endpoint.connect(addr, server)?;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    retry_connection
+                ).await {
+                    Ok(Ok(conn)) => {
+                        crate::log_client!("[QuicClient::send_message] Connection established (retry)");
+                        conn
+                    }
+                    Ok(Err(e)) => return Err(Box::new(e)),
+                    Err(_) => return Err("Connection timeout on retry".into()),
+                }
+            }
+            Err(_) => {
+                // Timeout - try one more time
+                crate::log_client!("[QuicClient::send_message] Connection timeout, retrying...");
+                let retry_connection = self.endpoint.connect(addr, server)?;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    retry_connection
+                ).await {
+                    Ok(Ok(conn)) => {
+                        crate::log_client!("[QuicClient::send_message] Connection established (timeout retry)");
+                        conn
+                    }
+                    Ok(Err(e)) => return Err(Box::new(e)),
+                    Err(_) => return Err("Connection timeout on final retry".into()),
+                }
+            }
+        };
+        
         crate::log_client!("[QuicClient::send_message] Connection established");
         
         // Open a bidirectional stream
@@ -55,7 +126,17 @@ impl QuicClient {
         
         // Serialize and send the message
         let json = serde_json::to_string(message)?;
-        crate::log_client!("[QuicClient::send_message] Serialized message - json_len={}", json.len());
+        
+        // Detect and log request type
+        let request_type = detect_request_type(&json);
+        crate::log_client!("[CLIENT] ===== OUTGOING REQUEST =====");
+        crate::log_client!("[CLIENT] REQUEST TYPE: {}", request_type);
+        crate::log_client!("[CLIENT] Function: quic_client::send_message()");
+        crate::log_client!("[CLIENT] Target: {}:{}", server, port);
+        crate::log_client!("[CLIENT] JSON payload length: {}", json.len());
+        crate::log_client!("[CLIENT] JSON payload: {}", json);
+        crate::log_client!("[CLIENT] Data sent to: Server {}:{}", server, port);
+        
         send.write_all(json.as_bytes()).await?;
         send.finish().await?;
         crate::log_client!("[QuicClient::send_message] Message sent, waiting for response");
@@ -85,7 +166,16 @@ impl QuicClient {
         crate::log_client!("[QuicClient::send_message] Deserializing response - buffer_len={}", buffer.len());
         // Deserialize the response
         let response: R = serde_json::from_slice(&buffer)?;
-        crate::log_client!("[QuicClient::send_message] Response deserialized successfully");
+        
+        // Detect and log response type from raw buffer
+        let response_str = String::from_utf8_lossy(&buffer);
+        let response_type = detect_response_type(&response_str);
+        crate::log_client!("[CLIENT] ===== INCOMING RESPONSE =====");
+        crate::log_client!("[CLIENT] RESPONSE TYPE: {}", response_type);
+        crate::log_client!("[CLIENT] Source: {}:{}", server, port);
+        crate::log_client!("[CLIENT] Response length: {}", buffer.len());
+        crate::log_client!("[CLIENT] Data received from: Server {}:{}", server, port);
+        crate::log_client!("[CLIENT] Response deserialized successfully");
         crate::log_client!("[QuicClient::send_message] EXIT - Return: success, response_size={}", buffer.len());
         
         Ok(response)

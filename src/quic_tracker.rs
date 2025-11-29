@@ -9,7 +9,24 @@
 
 use quinn::{Endpoint, ServerConfig};
 use crate::quic_utils::create_server_config;
-use crate::messages::{TrackerAnnounceRequest, TrackerAnnounceResponse, PeerInfo, FileRequest, FileResponse, ErrorResponse};
+use crate::messages::{TrackerAnnounceRequest, TrackerAnnounceResponse, PeerInfo, FileRequest, FileResponse, ErrorResponse, AiRequest, AiResponse, ResponseMetadata};
+use crate::ai_processor::{AiProcessor, AiProcessingConfig};
+use crate::work_distribution::{WorkDistributionManager, NodeCapability};
+
+/// Detect request type from JSON string
+fn detect_request_type(json: &str) -> &'static str {
+    if json.contains("\"info_hash\"") && json.contains("\"peer_id\"") {
+        "TrackerAnnounceRequest"
+    } else if json.contains("\"file\"") {
+        "FileRequest"
+    } else if json.contains("\"query\"") {
+        "AiRequest"
+    } else if json.contains("\"type\"") {
+        "CustomJSON"
+    } else {
+        "UnknownRequest"
+    }
+}
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::fs;
@@ -41,6 +58,8 @@ pub struct TrackerState {
 pub async fn handle_quic_connection(
     connection: quinn::Connection,
     state: Arc<RwLock<TrackerState>>,
+    ai_processor: Option<Arc<RwLock<AiProcessor>>>,
+    work_dist: Option<Arc<WorkDistributionManager>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let remote_addr = connection.remote_address();
     crate::log_server!("New QUIC connection established from: {}", remote_addr);
@@ -49,6 +68,8 @@ pub async fn handle_quic_connection(
         crate::log_server!("New bidirectional stream opened from: {}", remote_addr);
         let (mut send, mut recv) = stream;
         let state = Arc::clone(&state);
+        let ai_proc = ai_processor.clone();
+        let work_dist_clone = work_dist.clone();
         
         tokio::spawn(async move {
             // Read request
@@ -88,18 +109,43 @@ pub async fn handle_quic_connection(
                 }
             };
             
-            // Try to parse as announce request
+            // Detect and log request type
+            let request_type = detect_request_type(&request_str);
+            crate::log_server!("[REQUEST] REQUEST_TYPE: {} - from: {}", request_type, remote_addr);
+            crate::log_server!("[REQUEST] JSON payload: {}", request_str);
+            
+            // Route to appropriate processing module based on request type
+            crate::log_server!("[ROUTING] Incoming request detected - type: {}, from: {}", request_type, remote_addr);
+            
+            // Try to parse as announce request -> Tracker Module
             if let Ok(announce_req) = serde_json::from_str::<TrackerAnnounceRequest>(&request_str) {
+                crate::log_server!("[ROUTING] Request type: TrackerAnnounceRequest");
+                crate::log_server!("[ROUTING] Routing to: quic_tracker::handle_announce_request()");
+                crate::log_server!("[ROUTING] Processing module: Tracker Module");
                 crate::log_server_received!("Parsed TrackerAnnounceRequest from: {}", remote_addr);
                 handle_announce_request(announce_req, state, &mut send).await;
             }
-            // Try to parse as file request
+            // Try to parse as file request -> File Serving Module
             else if let Ok(file_req) = serde_json::from_str::<FileRequest>(&request_str) {
+                crate::log_server!("[ROUTING] Request type: FileRequest");
+                crate::log_server!("[ROUTING] Routing to: quic_tracker::handle_file_request()");
+                crate::log_server!("[ROUTING] Processing module: File Serving Module");
                 crate::log_server_received!("Parsed FileRequest from: {} - file: '{}'", remote_addr, file_req.file);
                 handle_file_request(file_req, &mut send).await;
             }
+            // Try to parse as AI request -> AI Processing Module
+            else if let Ok(ai_req) = serde_json::from_str::<AiRequest>(&request_str) {
+                crate::log_server!("[ROUTING] Request type: AiRequest");
+                crate::log_server!("[ROUTING] Routing to: quic_tracker::handle_ai_request()");
+                crate::log_server!("[ROUTING] Processing module: AI Processing Module");
+                crate::log_server!("[ROUTING] Handler function: handle_ai_request() -> ai_processor::process_query_sync()");
+                handle_ai_request(ai_req, ai_proc, work_dist_clone, &mut send).await;
+            }
             else {
-                // Unknown request type
+                // Unknown request type -> Error Handler Module
+                crate::log_server!("[ROUTING] Request type: UnknownRequest");
+                crate::log_server!("[ROUTING] Routing to: Error Handler (send_error)");
+                crate::log_server!("[ROUTING] Processing module: Error Handler Module");
                 crate::log_server!("ERROR: Unknown request type from: {} - request_len={}", remote_addr, request_str.len());
                 let error = ErrorResponse {
                     error: "Unknown request type".to_string(),
@@ -118,6 +164,10 @@ async fn handle_announce_request(
     state: Arc<RwLock<TrackerState>>,
     send: &mut quinn::SendStream,
 ) {
+    crate::log_server!("[HANDLER] Function: quic_tracker::handle_announce_request()");
+    crate::log_server!("[HANDLER] Module: Tracker Module");
+    crate::log_server!("[HANDLER] Processing TrackerAnnounceRequest");
+    
     let info_hash = req.info_hash.clone();
     let peer_ip = req.ip.unwrap_or_else(|| "127.0.0.1".to_string());
     
@@ -205,6 +255,9 @@ async fn handle_file_request(
     req: FileRequest,
     send: &mut quinn::SendStream,
 ) {
+    crate::log_server!("[HANDLER] Function: quic_tracker::handle_file_request()");
+    crate::log_server!("[HANDLER] Module: File Serving Module");
+    crate::log_server!("[HANDLER] Processing FileRequest");
     crate::log_server_received!("Received QUIC file download request: file='{}'", req.file);
     
     // Get current working directory
@@ -263,6 +316,131 @@ async fn handle_file_request(
     }
 }
 
+async fn handle_ai_request(
+    req: AiRequest,
+    ai_processor: Option<Arc<RwLock<AiProcessor>>>,
+    work_dist: Option<Arc<WorkDistributionManager>>,
+    send: &mut quinn::SendStream,
+) {
+    crate::log_server!("[HANDLER] Function: quic_tracker::handle_ai_request()");
+    crate::log_server!("[HANDLER] Module: AI Processing Module");
+    crate::log_server!("[HANDLER] Processing AiRequest");
+    crate::log_server!("[HANDLER] Handler chain: handle_ai_request() -> ai_processor::process_query_sync()");
+    
+    // Try to process locally first if AI processor is available
+    // Note: We process in a separate block to ensure lock is dropped before await
+    let local_response = {
+        if let Some(ai_proc) = &ai_processor {
+            crate::log_server!("[AI_PROCESSOR] process_query() called - query_len={}, context={}", 
+                req.query.len(), req.context.is_some());
+            
+            if let Some(params) = &req.parameters {
+                crate::log_server!("[AI_PROCESSOR] Parameters: temperature={:?}, max_tokens={:?}, top_p={:?}",
+                    params.temperature, params.max_tokens, params.top_p);
+            }
+            
+            crate::log_server!("[AI_PROCESSOR] Entering ai_processor.process_query() function");
+            
+            // Clone data needed for processing
+            let query = req.query.clone();
+            let context = req.context.clone();
+            let temp = req.parameters.as_ref().and_then(|p| p.temperature);
+            let max_tok = req.parameters.as_ref().and_then(|p| p.max_tokens);
+            let top_p_val = req.parameters.as_ref().and_then(|p| p.top_p);
+            
+            // Process and get result (lock is held only during the sync call)
+            let (answer, metadata) = {
+                crate::log_server!("[AI_PROCESSOR] Calling function: ai_processor::process_query_sync()");
+                crate::log_server!("[AI_PROCESSOR] Module: AI Processing Module");
+                let mut proc = ai_proc.write().unwrap();
+                proc.process_query_sync(
+                    &query,
+                    context.as_deref(),
+                    temp,
+                    max_tok,
+                    top_p_val,
+                ).unwrap_or_else(|e| {
+                    crate::log_server!("ERROR: AI processing failed: {}", e);
+                    (format!("Error: {}", e), ResponseMetadata {
+                        input_tokens: None,
+                        output_tokens: None,
+                        total_tokens: None,
+                        processing_time_ms: None,
+                    })
+                })
+            };
+            
+            crate::log_server!("[AI_PROCESSOR] process_query() returned - answer_len={}, tokens={:?}",
+                answer.len(), metadata.total_tokens);
+            
+            Some(AiResponse {
+                answer,
+                metadata: Some(metadata),
+            })
+        } else {
+            None
+        }
+    };
+    
+    // If local processing succeeded, send response
+    if let Some(response) = local_response {
+        let json_response = match serde_json::to_string(&response) {
+            Ok(json) => json,
+            Err(e) => {
+                crate::log_server!("ERROR: Error serializing AI response: {}", e);
+                let error = ErrorResponse {
+                    error: "Internal server error".to_string(),
+                    code: Some("SERIALIZATION_ERROR".to_string()),
+                };
+                serde_json::to_string(&error).unwrap()
+            }
+        };
+        
+        crate::log_server!("[HANDLER] handle_ai_request() -> sending AiResponse");
+        let _ = send.write_all(json_response.as_bytes()).await;
+        let _ = send.finish().await;
+        crate::log_server!("[HANDLER] handle_ai_request() completed");
+        return;
+    }
+    
+    // If local processing failed or not available, try work delegation
+    if let Some(work_dist_manager) = work_dist {
+        crate::log_server!("[WORK_DIST] Attempting work delegation for AI request");
+        match work_dist_manager.delegate_ai_work(&req, &NodeCapability::AiProcessing).await {
+            Ok(response) => {
+                let json_response = match serde_json::to_string(&response) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        crate::log_server!("ERROR: Error serializing delegated AI response: {}", e);
+                        let error = ErrorResponse {
+                            error: "Internal server error".to_string(),
+                            code: Some("SERIALIZATION_ERROR".to_string()),
+                        };
+                        serde_json::to_string(&error).unwrap()
+                    }
+                };
+                
+                crate::log_server!("[WORK_DIST] Delegated work completed successfully");
+                let _ = send.write_all(json_response.as_bytes()).await;
+                let _ = send.finish().await;
+                return;
+            }
+            Err(e) => {
+                crate::log_server!("ERROR: Work delegation failed: {}", e);
+            }
+        }
+    }
+    
+    // If all else fails, return error
+    let error = ErrorResponse {
+        error: "AI processing not available".to_string(),
+        code: Some("AI_UNAVAILABLE".to_string()),
+    };
+    let json_error = serde_json::to_string(&error).unwrap();
+    let _ = send.write_all(json_error.as_bytes()).await;
+    let _ = send.finish().await;
+}
+
 /// Starts the QUIC tracker server.
 ///
 /// This function:
@@ -278,7 +456,32 @@ async fn handle_file_request(
 /// * `Ok(())` if server starts successfully
 /// * `Err` if binding fails or certificate generation fails
 pub async fn run_quic_tracker(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    run_quic_tracker_with_ai(port, true, true).await
+}
+
+/// Starts the QUIC tracker server with AI capabilities and work distribution
+pub async fn run_quic_tracker_with_ai(
+    port: u16,
+    enable_ai: bool,
+    enable_work_dist: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(RwLock::new(TrackerState::default()));
+    
+    // Initialize AI processor if enabled
+    let ai_processor = if enable_ai {
+        crate::log_server!("[AI_PROCESSOR] Initializing AI processor");
+        Some(Arc::new(RwLock::new(AiProcessor::new(None))))
+    } else {
+        None
+    };
+    
+    // Initialize work distribution manager if enabled
+    let work_dist = if enable_work_dist {
+        crate::log_server!("[WORK_DIST] Initializing work distribution manager");
+        Some(Arc::new(WorkDistributionManager::new()))
+    } else {
+        None
+    };
     
     // Create seed directory if it doesn't exist
     let current_dir = std::env::current_dir()?;
@@ -334,8 +537,10 @@ pub async fn run_quic_tracker(port: u16) -> Result<(), Box<dyn std::error::Error
         
         // Spawn a task to handle this connection
         // QUIC allows multiple streams per connection, so we handle them all
+        let ai_proc = ai_processor.clone();
+        let work_dist_clone = work_dist.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_quic_connection(connection, state).await {
+            if let Err(e) = handle_quic_connection(connection, state, ai_proc, work_dist_clone).await {
                 crate::log_server!("ERROR: QUIC connection handler error: {}", e);
             }
         });

@@ -154,6 +154,10 @@ pub async fn announce_to_quic_tracker(
         ip: None,
     };
     
+    crate::log_client!("[CLIENT] REQUEST TYPE: TrackerAnnounceRequest");
+    crate::log_client!("[CLIENT] Function: client::announce_to_quic_tracker()");
+    crate::log_client!("[CLIENT] Routing to: Server -> quic_tracker::handle_announce_request()");
+    crate::log_client!("[CLIENT] Processing module: Tracker Module");
     crate::log_client!("[announce_to_quic_tracker] Created TrackerAnnounceRequest, creating QUIC client");
     let client = crate::quic_client::QuicClient::new()?;
     crate::log_client!("[announce_to_quic_tracker] QUIC client created, sending message to {}:{}", server, port);
@@ -205,6 +209,10 @@ pub async fn download_file_quic(
         file: filename.to_string(),
     };
     
+    crate::log_client!("[CLIENT] REQUEST TYPE: FileRequest");
+    crate::log_client!("[CLIENT] Function: client::download_file_quic()");
+    crate::log_client!("[CLIENT] Routing to: Server -> quic_tracker::handle_file_request()");
+    crate::log_client!("[CLIENT] Processing module: File Serving Module");
     crate::log_client!("[download_file_quic] Created FileRequest, creating QUIC client");
     let client = crate::quic_client::QuicClient::new()?;
     crate::log_client!("[download_file_quic] QUIC client created, sending file request to {}:{}", server, port);
@@ -295,5 +303,61 @@ pub async fn download_file_quic_torrent(
     crate::log_client!("[download_file_quic_torrent] EXIT - success=true, output_path={}", output_path);
     
     Ok(())
+}
+
+/// Sends an AI query to a QUIC AI service server.
+///
+/// # Arguments
+/// * `server` - Server hostname or IP address
+/// * `port` - Server port (default 7001 for tracker/AI service)
+/// * `query` - The user's query text
+/// * `context` - Optional conversation context (previous messages)
+/// * `temperature` - Optional temperature for sampling (0.0 to 2.0)
+/// * `max_tokens` - Optional maximum tokens to generate
+/// * `top_p` - Optional top-p sampling parameter
+///
+/// # Returns
+/// The AI response containing the answer and metadata
+pub async fn send_ai_query(
+    server: &str,
+    port: u16,
+    query: &str,
+    context: Option<Vec<crate::messages::MessageContext>>,
+    temperature: Option<f64>,
+    max_tokens: Option<usize>,
+    top_p: Option<f64>,
+) -> Result<crate::messages::AiResponse, Box<dyn std::error::Error>> {
+    crate::log_client!("[send_ai_query] ENTRY - server={}, port={}, query_len={}", 
+        server, port, query.len());
+    crate::log_client_sent!("Sending AI query to {}:{} - query: {}", server, port, query);
+    
+    let parameters = crate::messages::AiParameters {
+        temperature,
+        max_tokens,
+        top_p,
+    };
+    
+    let request = crate::messages::AiRequest {
+        query: query.to_string(),
+        context,
+        parameters: Some(parameters),
+    };
+    
+    crate::log_client!("[CLIENT] REQUEST TYPE: AiRequest");
+    crate::log_client!("[CLIENT] Function: client::send_ai_query()");
+    crate::log_client!("[CLIENT] Routing to: Server -> quic_tracker::handle_ai_request() -> ai_processor::process_query_sync()");
+    crate::log_client!("[CLIENT] Processing module: AI Processing Module");
+    crate::log_client!("[send_ai_query] Created AiRequest, creating QUIC client");
+    let client = crate::quic_client::QuicClient::new()?;
+    crate::log_client!("[send_ai_query] QUIC client created, sending AI request to {}:{}", server, port);
+    
+    let response: crate::messages::AiResponse = 
+        client.send_message(server, port, &request).await?;
+    
+    crate::log_client!("[send_ai_query] Received AI response - answer_len={}, metadata={:?}", 
+        response.answer.len(), response.metadata);
+    crate::log_client!("Received AI response: {} chars", response.answer.len());
+    
+    Ok(response)
 }
 

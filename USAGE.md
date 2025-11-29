@@ -404,3 +404,6 @@ Both logs show:
 - Configure firewall rules for your network
 - Set up automatic startup (systemd service, Windows service, etc.)
 
+
+
+
