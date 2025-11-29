@@ -49,19 +49,19 @@ impl ConsoleClient {
         // Clear screen using ANSI escape codes (works on modern Windows 10+ and Unix)
         print!("\x1B[2J\x1B[1;1H");
         
-        // Header
-        println!("╔══════════════════════════════════════════════════════════════════════════════╗");
-        println!("║                    BitTorrent & AI Client - Console                          ║");
-        println!("╚══════════════════════════════════════════════════════════════════════════════╝");
+        // Header (using ASCII characters for Windows console compatibility)
+        println!("==================================================================================");
+        println!("                    BitTorrent & AI Client - Console");
+        println!("==================================================================================");
         println!();
         
-        // Output area
-        println!("┌─────────────────────────────────── OUTPUT ───────────────────────────────────┐");
+        // Output area (using ASCII characters for Windows console compatibility)
+        println!("+----------------------------------- OUTPUT ------------------------------------+");
         if output_lines.is_empty() {
-            println!("│                                                                              │");
-            println!("│  No output yet. Type a command to get started.                              │");
-            println!("│  Type '/help' for available commands.                                        │");
-            println!("│                                                                              │");
+            println!("|                                                                              |");
+            println!("|  No output yet. Type a command to get started.                              |");
+            println!("|  Type '/help' for available commands.                                        |");
+            println!("|                                                                              |");
         } else {
             // Show last 20 lines (most recent first)
             let display_lines: Vec<_> = output_lines.iter().rev().take(20).collect();
@@ -74,11 +74,11 @@ impl ConsoleClient {
                     } else {
                         &wrapped
                     };
-                    println!("│  {:<76} │", display);
+                    println!("|  {:<76} |", display);
                 }
             }
         }
-        println!("└──────────────────────────────────────────────────────────────────────────────┘");
+        println!("+-------------------------------------------------------------------------------+");
         println!();
         
         // Commands help (compact)

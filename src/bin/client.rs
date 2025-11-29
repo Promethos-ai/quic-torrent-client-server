@@ -21,12 +21,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let args: Vec<String> = env::args().collect();
     
-    // Default to console mode if no command provided
-    let command = if args.len() < 2 {
-        "console".to_string()
-    } else {
-        args[1].clone()
-    };
+    // If no arguments provided, show complete instructions
+    if args.len() == 1 {
+        print_complete_instructions();
+        return Ok(());
+    }
+    
+    let command = &args[1];
     
     match command.as_str() {
         "console" | "interactive" => {
@@ -43,6 +44,90 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     Ok(())
+}
+
+fn print_complete_instructions() {
+    println!("========================================");
+    println!("QUIC BitTorrent Client - Connection Instructions");
+    println!("========================================");
+    println!();
+    println!("TEST UBUNTU SERVER CONNECTION:");
+    println!("  Server IP:    162.221.207.169");
+    println!("  Server Port:  7001");
+    println!("  Protocol:     QUIC (HTTP/3 over UDP)");
+    println!("  Encryption:   TLS 1.3 (built into QUIC)");
+    println!();
+    println!("========================================");
+    println!("AVAILABLE COMMANDS:");
+    println!("========================================");
+    println!();
+    println!("1. DOWNLOAD A FILE:");
+    println!("   cargo run --bin client download [file] [output] [server] [port]");
+    println!();
+    println!("   Examples:");
+    println!("   # Download hello_world.txt from test server:");
+    println!("   cargo run --bin client download hello_world.txt output.txt 162.221.207.169 7001");
+    println!();
+    println!("   # Download with defaults (uses 127.0.0.1:7001):");
+    println!("   cargo run --bin client download hello_world.txt output.txt");
+    println!();
+    println!("2. SEND AI QUERY:");
+    println!("   Use the random_json_test binary for AI queries:");
+    println!("   cargo run --release --bin random_json_test -- 162.221.207.169 7001 10");
+    println!();
+    println!("3. INTERACTIVE CONSOLE:");
+    println!("   cargo run --bin client console");
+    println!("   cargo run --bin client interactive");
+    println!();
+    println!("========================================");
+    println!("QUICK START - CONNECT TO TEST SERVER:");
+    println!("========================================");
+    println!();
+    println!("Step 1: Test connection with a file download");
+    println!("   cargo run --bin client download hello_world.txt test_output.txt 162.221.207.169 7001");
+    println!();
+    println!("Step 2: Test AI query (requires random_json_test binary)");
+    println!("   cargo run --release --bin random_json_test -- 162.221.207.169 7001 5");
+    println!();
+    println!("Step 3: Test tracker announce");
+    println!("   cargo run --release --bin random_json_test -- 162.221.207.169 7001 10");
+    println!();
+    println!("========================================");
+    println!("SERVER INFORMATION:");
+    println!("========================================");
+    println!();
+    println!("Test Ubuntu Server:");
+    println!("  - IP Address:  162.221.207.169");
+    println!("  - Port:         7001");
+    println!("  - Protocol:     QUIC");
+    println!("  - Status:       Python QUIC tracker server with AI capabilities");
+    println!("  - Features:     File serving, Tracker announce, AI processing");
+    println!();
+    println!("Available Files on Server:");
+    println!("  - hello_world.txt");
+    println!("  - small.txt");
+    println!("  - medium.bin");
+    println!("  - data.json");
+    println!("  - log.txt");
+    println!("  (Files are in ~/seed/ directory on server)");
+    println!();
+    println!("========================================");
+    println!("TROUBLESHOOTING:");
+    println!("========================================");
+    println!();
+    println!("If connection fails:");
+    println!("  1. Verify server is running: Check server logs on Ubuntu");
+    println!("  2. Check firewall: Ensure UDP port 7001 is open");
+    println!("  3. Verify network: ping 162.221.207.169");
+    println!("  4. Check certificates: Client uses self-signed certs (auto-accepted)");
+    println!("  5. View logs: Check client.log for detailed error messages");
+    println!();
+    println!("For more information, see:");
+    println!("  - README.md");
+    println!("  - CLIENT_DEPLOYMENT.md");
+    println!("  - QUICK_REFERENCE.md");
+    println!();
+    println!("========================================");
 }
 
 fn print_usage() {

@@ -275,8 +275,46 @@ async fn handle_file_request(
     
     crate::log_server!("Resolved file path: {}", file_path.display());
     
+    // Check file size limit (5MB max for JSON transfer to avoid timeouts)
+    const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5MB
+    let file_metadata = match fs::metadata(&file_path) {
+        Ok(meta) => meta,
+        Err(e) => {
+            let error_msg = format!("File not found or unreadable: {} - {}", file_path.display(), e);
+            crate::log_server!("ERROR: {}", error_msg);
+            let error = ErrorResponse {
+                error: format!("File not found: {}", file_path.display()),
+                code: Some("FILE_NOT_FOUND".to_string()),
+            };
+            let json_error = serde_json::to_string(&error).unwrap();
+            let _ = send.write_all(json_error.as_bytes()).await;
+            let _ = send.finish().await;
+            return;
+        }
+    };
+    
+    if file_metadata.len() > MAX_FILE_SIZE {
+        crate::log_server!("WARNING: File too large for JSON transfer: {} ({} bytes > {} bytes)", 
+            req.file, file_metadata.len(), MAX_FILE_SIZE);
+        let error = ErrorResponse {
+            error: format!("File too large: {} ({} bytes). Maximum size: {} bytes. Use chunked transfer for larger files.", 
+                req.file, file_metadata.len(), MAX_FILE_SIZE),
+            code: Some("FILE_TOO_LARGE".to_string()),
+        };
+        let json_error = serde_json::to_string(&error).unwrap();
+        let _ = send.write_all(json_error.as_bytes()).await;
+        let _ = send.finish().await;
+        return;
+    }
+    
     match fs::read(&file_path) {
         Ok(data) => {
+            // Warn about large file transfers (>1MB) that may be slow
+            if data.len() > 1024 * 1024 {
+                crate::log_server!("WARNING: Large file transfer: {} ({} bytes) - JSON serialization may be slow", 
+                    req.file, data.len());
+            }
+            
             crate::log_server!("File found: {} ({} bytes), sending via QUIC", file_path.display(), data.len());
             
             let response = FileResponse {
